@@ -1,0 +1,28 @@
+{
+  "name": "@mallika56/reflective-lantern",
+  "version": "1.0.0",
+  "description": "Control repo for Reflective Lantern, an autonomous code-improvement agent that runs as a Claude Code Cloud Routine.",
+  "main": "index.js",
+  "license": "MIT",
+  "author": "Mallika56",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mallika56/Reflective-Lantern.git"
+  },
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
+  "files": [
+    "index.js",
+    "prompts/"
+  ],
+  "keywords": [
+    "claude",
+    "agent",
+    "automation",
+    "code-improvement"
+  ],
+  "scripts": {
+    "test": "node -e \"const { getPrompts } = require('./index.js'); const k = Object.keys(getPrompts()); if (k.length === 0) { console.error('FAIL: no prompts loaded'); process.exit(1); } console.log(k);\""
+  }
+}
