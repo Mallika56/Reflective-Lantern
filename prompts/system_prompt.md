@@ -349,8 +349,44 @@ head -60 README.md
 
 ## PHASE 4 — Plan
 
-Identify improvements across five tiers. **Exhaust each tier before starting the next.** A repo
-with no tests does not get performance work.
+First, detect repo type:
+
+```bash
+find . -type f \
+  -not -path "*/node_modules/*" -not -path "*/venv/*" \
+  -not -path "*/__pycache__/*" -not -path "*/.git/*" \
+  -not -path "*/dist/*" -not -path "*/build/*" \
+  -not -name "*.ipynb" \
+  \( -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.go" -o -name "*.rs" \
+     -o -name "*.java" -o -name "*.rb" \) | head -1
+```
+
+If that prints nothing and `find . -name "*.ipynb" ... | head -1` prints something, this is a
+**notebook-only repo** — use the **Notebook tier** below instead of Tiers 1–5, then continue to
+PHASE 5 as normal. Otherwise, identify improvements across the five tiers below. **Exhaust each
+tier before starting the next.** A repo with no tests does not get performance work.
+
+### Notebook tier
+
+Notebook-only repos are not a dead end — they get real work, just not the service-oriented tiers
+above. Exhaust in order:
+
+| Problem | Fix |
+|---|---|
+| Notebook doesn't run top-to-bottom | `jupyter nbconvert --to notebook --execute` and fix whatever breaks |
+| Stray output/error cells committed | Clear them; commit clean |
+| No `requirements.txt` / `environment.yml` | Pin every import actually used, from the executed environment |
+| Repeated logic across cells or notebooks | Extract into a `src/` module with functions; import it back into the notebook |
+| No tests for extracted logic | pytest on the `src/` functions, external calls mocked — same 5-function minimum as Tier 2 |
+| Magic paths / hardcoded credentials in a cell | Move to `os.environ.get` or a top-of-notebook config cell, document in `.env.example` |
+| No explanation of what the analysis shows | Markdown cells before each major section: what question it answers, what the result means |
+| `.ipynb_checkpoints/` committed | Add to `.gitignore`, remove from tracking |
+| No CI | `.github/workflows/ci.yml`: checkout → setup-python → install → `nbconvert --execute` (and pytest if a `src/` module exists) |
+| README doesn't say how to run it | Quick Start: env setup, how to launch the notebook, what data it expects |
+
+If every row above is already satisfied per the repo's history file, say so and move on — do not
+manufacture cosmetic notebook edits to hit the commit target here specifically; use the normal
+fill-up list in Phase 7.5 instead.
 
 ### Tier 1 — Security & correctness
 
@@ -564,13 +600,26 @@ to the top of the list to manufacture more commits — the list is designed to b
 
 ## PHASE 8 — Push
 
+First, check whether today's repo is on the PR-only list:
+
+```bash
+PR_ONLY=$(python3 -c "
+import json, pathlib
+p = pathlib.Path('$LANTERN_DIR/history/pr_only_repos.json')
+repos = json.loads(p.read_text()) if p.exists() else []
+print('true' if '$REPO_NAME' in repos else 'false')
+")
+echo "PR_ONLY=$PR_ONLY"
+```
+
+If `PR_ONLY` is `false`, push straight to `main` — this is the default:
+
 ```bash
 git push origin main || { git pull --rebase origin main && git push origin main; }
 ```
 
-**On pushing straight to `main`.** This is the configured default and it matches the original
-design. If any managed repo holds work that matters — anything you would not want an unattended
-process rewriting — switch that repo to a review surface instead:
+If `PR_ONLY` is `true`, the repo holds work that matters — anything you would not want an
+unattended process rewriting directly. Route through a PR instead:
 
 ```bash
 BRANCH="lantern/$(date +%Y-%m-%d)"
@@ -581,8 +630,7 @@ curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
      -d "{\"title\":\"Reflective Lantern — $(date +%Y-%m-%d)\",\"head\":\"$BRANCH\",\"base\":\"main\",\"body\":\"Automated improvements. See commit list.\"}"
 ```
 
-Maintain the opt-in list in `history/pr_only_repos.json` as a JSON array of repo names; check it
-in Phase 1 and route those repos through the PR path here.
+Maintain the opt-in list in `history/pr_only_repos.json` as a JSON array of repo names.
 
 ## PHASE 9 — Report
 
@@ -912,7 +960,6 @@ and treat Tier 2 as the highest-value available work.
 Skip a repo, and pick the next candidate by re-running Phase 1 with the seed incremented by one,
 when:
 
-- **Notebook-only repos.** Source entirely `.ipynb` — README work only.
 - **Pure configuration repos.** Terraform, Helm, dotfiles — documentation only, no refactors.
 - **Repos whose history shows the work is done.** If `history/<repo>.json` shows the obvious
   passes are complete (tests exist, CI badge present, README current), there is no high-value
