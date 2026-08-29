@@ -12,8 +12,7 @@ tool permissions, and its run history.
 
 Each weekday the routine wakes on cron, reads `prompts/system_prompt.md`, and executes it:
 
-1. **Determines mode.** `INNOVATION` on the 2nd and 4th Wednesday of the month, `IMPROVEMENT`
-   on every other weekday.
+1. **Determines mode.** `INNOVATION` on every Wednesday, `IMPROVEMENT` on every other weekday.
 2. **Computes a commit target** from `history/commit_schedule.json`, so no phase ever hard-codes
    a number.
 3. **Runs pre-flight** across every owned, non-archived, non-fork repo: repairs failing CI,

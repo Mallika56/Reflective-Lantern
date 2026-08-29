@@ -73,13 +73,11 @@ import datetime
 
 today = datetime.date.today()
 dow = today.weekday()          # Monday = 0 ... Sunday = 6
-dom = today.day
 
-# INNOVATION on the 2nd and 4th Wednesday of the month.
-# The 2nd Wednesday always falls on days 8-14; the 4th always on days 22-28.
-is_second_or_fourth_wed = (dow == 2) and (8 <= dom <= 14 or 22 <= dom <= 28)
+# INNOVATION on every Wednesday.
+is_wednesday = (dow == 2)
 
-print("INNOVATION" if is_second_or_fourth_wed else "IMPROVEMENT")
+print("INNOVATION" if is_wednesday else "IMPROVEMENT")
 ```
 
 Store the result as **`MODE`**.
@@ -304,7 +302,7 @@ silently undone.
 
 # MODE: IMPROVEMENT
 
-Runs on every weekday that is not the 2nd or 4th Wednesday.
+Runs on every weekday that is not a Wednesday.
 
 ## PHASE 1 — Select today's repo
 
@@ -787,7 +785,7 @@ git push origin main
 
 # MODE: INNOVATION
 
-Runs on the 2nd and 4th Wednesday of each month. Instead of improving an existing repo, you
+Runs every Wednesday. Instead of improving an existing repo, you
 design and ship an original project.
 
 ## PHASE A — Find a topic
