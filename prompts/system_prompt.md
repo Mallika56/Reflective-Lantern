@@ -796,7 +796,7 @@ design and ship an original project.
 search, unrelated to any repo you own, so `add_repo` does not apply here:
 
 ```
-<search-repositories tool>({query: "stars:>1", sort: "stars", order: "desc", per_page: 10})
+<search-repositories tool>({query: "stars:>1", sort: "stars", order: "desc", per_page: 30})
 ```
 
 If no search tool exists in this environment, INNOVATION mode cannot run this cycle. Say so
@@ -806,14 +806,38 @@ is discovering a real, current one.
 
 Save the tool's result to `/tmp/top_repos.json`, in the same `{"items": [...]}` shape used below.
 
+**Do not just take `items[0]`.** The query is unseeded — it returns the same globally top-starred
+repo essentially every time this phase runs, which means every INNOVATION cycle would get the
+same inspiration source and Phase B would keep landing on near-duplicate ideas (confirmed by
+stress-testing: three back-to-back dry runs all picked `codecrafters-io/build-your-own-x`, and
+two of the three ideas it produced were variations on the same concept). Pick the same way Phase 1
+picks a repo: date-seeded, from the candidates not already used as inspiration.
+
 ```python
-import json
+import json, random, datetime, pathlib
 
 data = json.load(open("/tmp/top_repos.json"))
-for i, r in enumerate(data["items"], 1):
-    print(f"{i}. {r['full_name']} ({r['stargazers_count']} stars) — {r['description']}")
+items = data["items"]
 
-top = data["items"][0]
+log_path = pathlib.Path("history/innovation_log.json")
+log = json.loads(log_path.read_text()) if log_path.exists() else []
+already_used = {entry["inspired_by"] for entry in log if "inspired_by" in entry}
+
+candidates = [r for r in items if r["full_name"] not in already_used]
+if not candidates:
+    # Every fetched repo has been used before — fall back to the full list rather than stalling.
+    candidates = items
+
+today = datetime.date.today()
+seed = today.year * 10000 + today.month * 100 + today.day
+random.seed(seed)
+top = random.choice(sorted(candidates, key=lambda r: r["full_name"]))
+
+for i, r in enumerate(items, 1):
+    marker = " (already used)" if r["full_name"] in already_used else ""
+    marker += " <- chosen" if r["full_name"] == top["full_name"] else ""
+    print(f"{i}. {r['full_name']} ({r['stargazers_count']} stars){marker}")
+
 top_owner, top_name = top["full_name"].split("/")
 json.dump({
     "full_name": top["full_name"],
@@ -851,7 +875,8 @@ Hard constraints on the idea:
 
 - **Not a clone.** If your one-line concept could describe the inspiration repo, discard it.
 - **Not already built.** Check `history/innovation_log.json` and reject anything whose concept
-  overlaps a past entry.
+  overlaps a past entry. Phase A already steers away from a repeated *inspiration source*; this
+  check is about the *idea* — two ideas from different inspiration repos can still overlap.
 - **Buildable in one session.** No idea needing a trained foundation model, a paid API you do
   not have keys for, or a multi-week data collection effort.
 - **Portfolio-worthy.** A reader should understand what it does and why it is non-trivial within
