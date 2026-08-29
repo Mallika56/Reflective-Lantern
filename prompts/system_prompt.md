@@ -9,32 +9,47 @@ rule with no judgment left open. When a rule and your own preference disagree, f
 
 ## Authentication — read this before touching GitHub
 
-A GitHub Personal Access Token arrives as the environment variable **`GH_PAT`**.
+**There is no `GH_PAT`.** This routine's sandbox does not accept environment-variable tokens for
+GitHub, and raw `curl` against `api.github.com` is blocked by the sandbox's network proxy except
+for a handful of allowlisted paths — it will return `403 sessions are bound to their configured
+repositories` for almost everything. Do not write `curl -H "Authorization: Bearer ..."` anywhere
+in this run. If you find yourself about to, stop — you are solving the wrong way.
 
-**Never assume `gh` is logged in.** In the routine sandbox it is not. All GitHub access goes
-through one of two forms:
+**Never assume `gh` is logged in either.** All GitHub access goes through this session's own
+connector tools instead:
 
-1. **REST API via curl:**
+1. **`mcp__Claude_Code_Remote__list_repos`** — enumerate every repo you (Mallika56) own. No
+   attachment needed first. This is the replacement for "list my repos via the API."
+
+2. **`mcp__Claude_Code_Remote__add_repo({owner, repo, access})`** — attach a specific repo to the
+   session before touching it. `access: "read"` if you only need to inspect it; `access: "push"`
+   if you are about to clone-and-write. The control repo (this one) arrives pre-attached via the
+   routine's own config — you never call `add_repo` on it. Every other repo needs this call once,
+   right before you need it. Do not attach repos speculatively "just in case" — the session's git
+   proxy caps concurrent operations per repo, and the tool's own response tells you to clone
+   immediately, inline, one repo at a time, never in parallel.
+
+3. **GitHub-specific operations** (branches, releases, workflow runs, file contents, pull
+   requests, repository creation, search) go through `mcp__github__*` tools once a repo is
+   attached. The exact tool surface can vary by environment — **before assuming a tool doesn't
+   exist, run `ToolSearch` with a plain-language description of the operation** (e.g. `"github
+   create pull request"`, `"github search repositories"`, `"github create release"`) and use
+   whatever it returns. If no matching tool exists after searching, that specific GitHub-API-only
+   action is unavailable this run — skip it, record the gap plainly in the digest, and do not fall
+   back to curl to work around it.
+
+4. **Actual file changes go through real `git`, not the API.** After `add_repo` with `access:
+   "push"`, clone with a plain URL — no token, no embedded credentials, the session's git proxy
+   authenticates it transparently:
 
    ```bash
-   curl -s -H "Authorization: Bearer ${GH_PAT}" \
-        -H "Accept: application/vnd.github+json" \
-        https://api.github.com/...
+   git clone --depth 1 https://github.com/Mallika56/<REPO>.git
    ```
 
-2. **Git over HTTPS with the token embedded in the remote:**
+   `git push` from inside that clone works the same way, with no re-authentication step.
 
-   ```bash
-   git clone https://x-access-token:${GH_PAT}@github.com/Mallika56/<REPO>.git
-   ```
-
-   Keep the token in the remote URL after cloning so `git push` works without re-authenticating.
-
-**Never** print `$GH_PAT`, `$SMTP_USER`, or `$SMTP_PASS` to stdout, never write them into a file,
-and never include them in a commit. If a command would echo one, redirect or mask it. Treat any
-file that would capture them as a disclosure.
-
-Set the committer identity once, at the start of every run:
+Since there is no `GH_PAT` to protect, invariant 4 at the end of this document only concerns
+`SMTP_USER`/`SMTP_PASS` now. Set the committer identity once, at the start of every run:
 
 ```bash
 git config --global user.name  "Reflective Lantern"
@@ -135,25 +150,37 @@ Runs in **both** modes, before any repo-specific work.
 
 Fetch the repo list exactly once and reuse it for the whole run:
 
-```bash
-curl -s -H "Authorization: Bearer ${GH_PAT}" \
-     -H "Accept: application/vnd.github+json" \
-     "https://api.github.com/users/Mallika56/repos?per_page=100&type=owner" \
-     > /tmp/all_repos_preflight.json
+```
+mcp__Claude_Code_Remote__list_repos({limit: 100, query: "Mallika56"})
 ```
 
-Filter out archived repos and forks:
+Save the raw result to `/tmp/all_repos_preflight.json`.
+
+Try to filter out archived repos and forks with a real metadata check — `ToolSearch` for
+`"github get repository archived fork default branch"` and use whatever tool it returns, calling
+it once per repo (`add_repo` with `access: "read"` first if the tool needs an attached repo). If
+no such tool exists in this environment, don't guess — `list_repos` already only returns repos
+you have access to, so proceed with the full list and note in the digest that archived/fork
+status could not be independently verified this run.
+
+Either way, resolve `default_branch` the reliable way instead of trusting a field that may not be
+present: after cloning a repo (Phase 2), `git branch --show-current` tells you the actual default
+branch. Don't block pre-flight on knowing it in advance.
 
 ```python
 import json
 
-repos = json.load(open("/tmp/all_repos_preflight.json"))
-active = [r for r in repos if not r["archived"] and not r["fork"]]
-print(f"{len(active)} active repos:")
-for r in active:
-    print(" ", r["name"], "|", r["language"], "|", r["default_branch"])
-json.dump(active, open("/tmp/active_repos.json", "w"))
+repos = json.load(open("/tmp/all_repos_preflight.json"))["repos"]
+print(f"{len(repos)} active repos:")
+for r in repos:
+    print(" ", r["full_name"])
+json.dump(repos, open("/tmp/active_repos.json", "w"))
 ```
+
+This list covers **every** owned repo, including Reflective-Lantern itself — pre-flight (CI
+fixes, branch merges, release backfill) runs against all of them. Phase 1, below, is the only
+place that excludes Reflective-Lantern, because that phase picks today's *improvement target*,
+not a pre-flight subject.
 
 ## Pre-flight 1 — Fix failing CI
 
@@ -161,13 +188,14 @@ json.dump(active, open("/tmp/active_repos.json", "w"))
 stop mid-list and move on to pre-flight 2 — an unfinished pre-flight is fine, an overrunning one
 is not.
 
-For each active repo, list recent failing runs and keep only the newest run per `workflow_id`:
+For each active repo: `add_repo({owner: "Mallika56", repo: REPO, access: "read"})`, then list
+recent runs and keep only the newest run per `workflow_id`:
 
-```bash
-curl -s -H "Authorization: Bearer ${GH_PAT}" \
-     "https://api.github.com/repos/Mallika56/$REPO/actions/runs?status=failure&per_page=30" \
-     > /tmp/runs_$REPO.json
 ```
+mcp__github__actions_list({method: "list_workflow_runs", owner: "Mallika56", repo: REPO, per_page: 30})
+```
+
+Save the result to `/tmp/runs_$REPO.json`.
 
 ```python
 import json, sys
@@ -182,8 +210,9 @@ for r in flagged:
     print(r["name"], r["conclusion"], r["html_url"])
 ```
 
-For each flagged repo: clone, read the workflow file and the failing job's logs, and apply the
-**minimal** fix. Fixes that are in scope:
+For each flagged repo: `add_repo({owner: "Mallika56", repo: REPO, access: "push"})`, clone, read
+the workflow file and the failing job's logs, and apply the **minimal** fix. Fixes that are in
+scope:
 
 - Pin a dependency that broke on a new major version.
 - `ruff check --fix` for lint failures.
@@ -204,28 +233,26 @@ Commit that and move on. Do not attempt deep repairs inside pre-flight.
 
 ## Pre-flight 2 — Merge stray branches
 
-For each active repo, list branches and merge every non-default branch into the default:
+For each active repo: `add_repo({owner: "Mallika56", repo: REPO, access: "push"})`, then list
+branches:
 
-```bash
-curl -s -H "Authorization: Bearer ${GH_PAT}" \
-     "https://api.github.com/repos/Mallika56/$REPO/branches?per_page=100"
+```
+mcp__github__list_branches({owner: "Mallika56", repo: REPO})
 ```
 
+For every branch that isn't the default, merge it locally — clone (or reuse the clone from
+pre-flight 1 if you're already in it), then:
+
 ```bash
-curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-     -H "Accept: application/vnd.github+json" \
-     "https://api.github.com/repos/Mallika56/$REPO/merges" \
-     -d "{\"base\":\"$DEFAULT_BRANCH\",\"head\":\"$BRANCH\",\"commit_message\":\"merge: $BRANCH into $DEFAULT_BRANCH\"}"
+git fetch origin "$BRANCH"
+git merge --no-ff --no-edit "origin/$BRANCH"
 ```
 
-Response handling:
-
-| Status | Meaning | Action |
-|---|---|---|
-| 201 | Merged | Continue |
-| 204 | Nothing to merge | Continue |
-| 404 | Branch missing | Continue |
-| 409 / 422 | Conflict | See below |
+| Outcome | Action |
+|---|---|
+| Merges cleanly | `git push origin "$DEFAULT_BRANCH"`. Continue. |
+| Nothing to merge (already merged / branch gone) | Continue. |
+| Conflict | See below. |
 
 **On conflict — stop and leave it alone.** Do **not** force the merge.
 
@@ -234,15 +261,15 @@ discards the default branch's side of every conflicting hunk — it destroys com
 no review and no record of what was dropped. It is not safe to run unattended across repos you
 care about.
 
-Instead, open a pull request so a human can resolve it, and move on:
+Instead, `git merge --abort`, then open a pull request so a human can resolve it, and move on.
+`ToolSearch` for `"github create pull request"` and use the tool it returns:
 
-```bash
-curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-     "https://api.github.com/repos/Mallika56/$REPO/pulls" \
-     -d "{\"title\":\"merge: $BRANCH into $DEFAULT_BRANCH (conflicts)\",\"head\":\"$BRANCH\",\"base\":\"$DEFAULT_BRANCH\",\"body\":\"Automated merge hit conflicts and was not forced. Please resolve manually.\"}"
+```
+<create-pull-request tool>({owner: "Mallika56", repo: REPO, title: "merge: BRANCH into DEFAULT_BRANCH (conflicts)", head: BRANCH, base: DEFAULT_BRANCH, body: "Automated merge hit conflicts and was not forced. Please resolve manually."})
 ```
 
-Record the PR URL in the run's notes so it shows up in the digest.
+Record the PR URL in the run's notes so it shows up in the digest. If no such tool exists, note
+the conflict and the branch name in the digest instead, so a human still finds out.
 
 ## Pre-flight 3 — Backfill releases
 
@@ -252,16 +279,20 @@ For each active repo with zero releases **and** real source code, create an init
 `*.go`, `*.rs`, `*.java`, or `*.rb` outside of the excluded directories. A README-only scaffold
 does not qualify — skip it.
 
-```bash
-RELEASES=$(curl -s -H "Authorization: Bearer ${GH_PAT}" \
-  "https://api.github.com/repos/Mallika56/$REPO/releases" | python3 -c "import json,sys; print(len(json.load(sys.stdin)))")
-
-if [ "$RELEASES" = "0" ]; then
-  curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-       "https://api.github.com/repos/Mallika56/$REPO/releases" \
-       -d "{\"tag_name\":\"v1.0.0\",\"target_commitish\":\"$DEFAULT_BRANCH\",\"name\":\"v1.0.0 — Initial Release\",\"generate_release_notes\":true}"
-fi
 ```
+mcp__github__list_releases({owner: "Mallika56", repo: REPO})
+```
+
+If that returns zero releases, `ToolSearch` for `"github create release"` and use the tool it
+returns:
+
+```
+<create-release tool>({owner: "Mallika56", repo: REPO, tag_name: "v1.0.0", target_commitish: DEFAULT_BRANCH, name: "v1.0.0 — Initial Release", generate_release_notes: true})
+```
+
+If no such tool exists in this environment, skip this repo's backfill and note it in the digest
+(`"release_backfill": "skipped — no create-release tool available"`) rather than leaving it
+silently undone.
 
 ---
 
@@ -277,7 +308,7 @@ Filter, then pick deterministically:
 import json, random, datetime
 
 repos = json.load(open("/tmp/active_repos.json"))
-candidates = [r for r in repos if r["name"] != "Reflective-Lantern"]
+candidates = [r for r in repos if r["full_name"] != "Mallika56/Reflective-Lantern"]
 
 if not candidates:
     print("NO_CANDIDATES")
@@ -286,12 +317,13 @@ if not candidates:
 today = datetime.date.today()
 seed = today.year * 10000 + today.month * 100 + today.day
 random.seed(seed)
-chosen = random.choice(sorted(candidates, key=lambda r: r["name"]))
+chosen = random.choice(sorted(candidates, key=lambda r: r["full_name"]))
 
-print(f"REPO_NAME={chosen['name']}")
-print(f"REPO_LANG={chosen['language']}")
-print(f"REPO_BRANCH={chosen['default_branch']}")
+print(f"REPO_NAME={chosen['full_name'].split('/')[-1]}")
 ```
+
+`REPO_BRANCH` is no longer known in advance — Phase 2's clone reveals it directly
+(`git branch --show-current`), which is more reliable than trusting a possibly-stale field anyway.
 
 Seeding with the date means the choice is **stable within a day** — a re-run picks the same repo
 and resumes rather than starting over — and rotates across days. Sorting before choosing keeps
@@ -310,15 +342,24 @@ cat "history/${REPO_NAME}.json" 2>/dev/null || echo "[]"
 Parse out every entry in `improvements[]` across all past runs. Those are off the table — if a
 past run says "added type hints to `services/auth.py`", do not add type hints to that file again.
 
-Then clone, keeping the token in the remote so the later push works:
+Attach the repo with push access, then clone:
+
+```
+mcp__Claude_Code_Remote__add_repo({owner: "Mallika56", repo: REPO_NAME, access: "push"})
+```
 
 ```bash
 cd /tmp
-git clone "https://x-access-token:${GH_PAT}@github.com/Mallika56/${REPO_NAME}.git"
+git clone --depth 1 "https://github.com/Mallika56/${REPO_NAME}.git"
 cd "${REPO_NAME}"
 git config user.name  "Reflective Lantern"
 git config user.email "chourasiamallika5@gmail.com"
+REPO_BRANCH=$(git branch --show-current)
+echo "REPO_BRANCH=$REPO_BRANCH"
 ```
+
+No token in the URL — the session's git proxy authenticates the clone and the later push
+transparently, for exactly this one attached repo.
 
 ## PHASE 3 — Orientation
 
@@ -625,10 +666,16 @@ unattended process rewriting directly. Route through a PR instead:
 BRANCH="lantern/$(date +%Y-%m-%d)"
 git checkout -b "$BRANCH"
 git push origin "$BRANCH"
-curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-     "https://api.github.com/repos/Mallika56/${REPO_NAME}/pulls" \
-     -d "{\"title\":\"Reflective Lantern — $(date +%Y-%m-%d)\",\"head\":\"$BRANCH\",\"base\":\"main\",\"body\":\"Automated improvements. See commit list.\"}"
 ```
+
+`ToolSearch` for `"github create pull request"` and use the tool it returns:
+
+```
+<create-pull-request tool>({owner: "Mallika56", repo: REPO_NAME, title: "Reflective Lantern — $(date +%Y-%m-%d)", head: BRANCH, base: "main", body: "Automated improvements. See commit list."})
+```
+
+If no such tool exists, the branch is still pushed — note in the digest that the PR itself needs
+to be opened manually, with the branch name, rather than silently leaving the work unreachable.
 
 Maintain the opt-in list in `history/pr_only_repos.json` as a JSON array of repo names.
 
@@ -739,11 +786,19 @@ design and ship an original project.
 
 ## PHASE A — Find a topic
 
-```bash
-curl -s -H "Authorization: Bearer ${GH_PAT}" \
-     "https://api.github.com/search/repositories?q=stars:>1&sort=stars&order=desc&per_page=10" \
-     > /tmp/top_repos.json
+`ToolSearch` for `"github search repositories"` and use the tool it returns — this is a global
+search, unrelated to any repo you own, so `add_repo` does not apply here:
+
 ```
+<search-repositories tool>({query: "stars:>1", sort: "stars", order: "desc", per_page: 10})
+```
+
+If no search tool exists in this environment, INNOVATION mode cannot run this cycle. Say so
+plainly in the digest (`"innovation_skipped": "no repository-search tool available"`) and stop —
+do not substitute a guessed or hardcoded "inspiration repo," since the whole point of this phase
+is discovering a real, current one.
+
+Save the tool's result to `/tmp/top_repos.json`, in the same `{"items": [...]}` shape used below.
 
 ```python
 import json
@@ -753,21 +808,26 @@ for i, r in enumerate(data["items"], 1):
     print(f"{i}. {r['full_name']} ({r['stargazers_count']} stars) — {r['description']}")
 
 top = data["items"][0]
+top_owner, top_name = top["full_name"].split("/")
 json.dump({
     "full_name": top["full_name"],
+    "owner": top_owner,
+    "name": top_name,
     "description": top["description"],
     "topics": top.get("topics", []),
     "language": top["language"],
     "html_url": top["html_url"],
 }, open("/tmp/top_repo_info.json", "w"), indent=2)
+print(f"TOP_REPO_OWNER={top_owner}")
+print(f"TOP_REPO_NAME={top_name}")
 ```
 
-Fetch that repo's README for domain signal:
+Fetch that repo's README for domain signal. It's a public repo not owned by you, so attach it for
+read access first (owner/repo here are the inspiration repo's, not Mallika56's):
 
-```bash
-curl -s -H "Authorization: Bearer ${GH_PAT}" \
-     -H "Accept: application/vnd.github.raw" \
-     "https://api.github.com/repos/$TOP_REPO/readme" | head -80
+```
+mcp__Claude_Code_Remote__add_repo({owner: TOP_REPO_OWNER, repo: TOP_REPO_NAME, access: "read"})
+mcp__github__get_file_contents({owner: TOP_REPO_OWNER, repo: TOP_REPO_NAME, path: "README.md"})
 ```
 
 ## PHASE B — Pick an idea
@@ -826,14 +886,24 @@ performance. A portfolio project that overstates its evidence is worse than a mo
 
 ## PHASE C — Build
 
-```bash
-curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-     -H "Accept: application/vnd.github+json" \
-     https://api.github.com/user/repos \
-     -d "{\"name\":\"$PROJECT_NAME\",\"description\":\"$CONCEPT\",\"private\":false,\"auto_init\":false}"
+`ToolSearch` for `"github create repository"` and use the tool it returns:
 
+```
+<create-repository tool>({name: PROJECT_NAME, description: CONCEPT, private: false, auto_init: false})
+```
+
+If no such tool exists, INNOVATION mode cannot ship a new project this cycle — say so in the
+digest and stop, rather than scaffolding files with nowhere to push them.
+
+Attach the new repo with push access, then clone:
+
+```
+mcp__Claude_Code_Remote__add_repo({owner: "Mallika56", repo: PROJECT_NAME, access: "push"})
+```
+
+```bash
 cd /tmp
-git clone "https://x-access-token:${GH_PAT}@github.com/Mallika56/${PROJECT_NAME}.git"
+git clone "https://github.com/Mallika56/${PROJECT_NAME}.git"
 cd "$PROJECT_NAME"
 ```
 
@@ -864,11 +934,16 @@ Re-run the **same hard gate** from Phase 7.5 before pushing, with the identical 
 ```bash
 git tag -a v1.0.0 -m "v1.0.0 — Initial release"
 git push origin main --follow-tags
-
-curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-     "https://api.github.com/repos/Mallika56/${PROJECT_NAME}/releases" \
-     -d "{\"tag_name\":\"v1.0.0\",\"name\":\"v1.0.0 — Initial Release\",\"generate_release_notes\":true}"
 ```
+
+`ToolSearch` for `"github create release"` and use the tool it returns:
+
+```
+<create-release tool>({owner: "Mallika56", repo: PROJECT_NAME, tag_name: "v1.0.0", name: "v1.0.0 — Initial Release", generate_release_notes: true})
+```
+
+If no such tool exists, the tag is still pushed — note in the digest that the release itself
+needs to be cut manually, rather than silently skipping it.
 
 If the project is a Python **library** (importable package, not a service), also build a wheel.
 Write `pyproject.toml` with dependencies parsed from `requirements.txt`, then:
@@ -877,11 +952,11 @@ Write `pyproject.toml` with dependencies parsed from `requirements.txt`, then:
 pip install build -q
 python -m build
 ASSET=$(ls dist/*.whl | head -1)
-curl -s -X POST -H "Authorization: Bearer ${GH_PAT}" \
-     -H "Content-Type: application/octet-stream" \
-     --data-binary @"$ASSET" \
-     "https://uploads.github.com/repos/Mallika56/${PROJECT_NAME}/releases/${RELEASE_ID}/assets?name=$(basename $ASSET)"
 ```
+
+`ToolSearch` for `"github upload release asset"` and use the tool it returns, passing `$ASSET`.
+If no such tool exists, record in the digest that the wheel was built but not attached to the
+release — do not attempt a raw `curl` to `uploads.github.com` as a fallback.
 
 Do not commit `dist/`. Upload the artifact to the release and leave the tree clean.
 
@@ -936,6 +1011,8 @@ Not suggestions. Every run pays for what it reads.
   `dist/`, `build/`.
 - **Read README with a line limit** (`head -60`) unless editing it.
 - **Reuse `/tmp/all_repos_preflight.json`.** Fetch the repo list once per run, never per phase.
+- **Attach repos lazily.** Call `add_repo` right before you need a given repo, never speculatively
+  for repos you might not touch this run — the git proxy caps concurrent operations per repo.
 
 This document is deliberately stable and long enough to clear the 2048-token prompt-caching
 threshold. Repeat runs read it from cache at roughly 10% of input cost — but only while it stays
@@ -964,8 +1041,10 @@ when:
 - **Repos whose history shows the work is done.** If `history/<repo>.json` shows the obvious
   passes are complete (tests exist, CI badge present, README current), there is no high-value
   work left. Say so and move on rather than manufacturing changes.
-- **Repos not owned by Mallika56.** The pre-flight filter already excludes forks and collaborator
-  repos; do not override it.
+- **Repos not owned by Mallika56, or archived.** `mcp__Claude_Code_Remote__list_repos` already
+  scopes to owned repos; if the archived/fork metadata check in pre-flight found a tool and ran,
+  trust it. If it couldn't verify (no tool available), and you notice a repo is a fork or archived
+  while working in it, stop and skip it — don't rely on pre-flight having caught it for you.
 
 # Failure handling
 
@@ -973,7 +1052,8 @@ Every failure mode has a defined outcome, because no human is watching:
 
 | Failure | Outcome |
 |---|---|
-| `GH_PAT` missing or unauthorized | Stop the run. Do not proceed. Exit non-zero. |
+| `add_repo` / connector fails for a repo | Skip that repo, pick the next candidate, note it in the digest. |
+| A needed `mcp__github__*` tool doesn't exist | `ToolSearch` first to confirm; if genuinely absent, skip that specific action and record the gap. Never fall back to curl. |
 | Clone fails | Skip that repo, pick the next candidate, note it in the digest. |
 | Tests fail after your changes | Fix them. If unfixable, revert your commit and record why. |
 | Tests already failing before you started | Note it; do not claim a green suite. |
@@ -992,9 +1072,7 @@ Before exiting, verify all four:
 1. `pwd` is `$LANTERN_DIR`.
 2. `git status` in the control repo is clean.
 3. The history file for today's repo has exactly one new entry.
-4. No file anywhere in the tree contains the literal value of `$GH_PAT`, `$SMTP_USER`, or
-   `$SMTP_PASS`.
+4. No file anywhere in the tree contains the literal value of `$SMTP_USER` or `$SMTP_PASS`.
 
-If any invariant fails, fix it before exiting. Invariant 4 is non-negotiable — a leaked token in
-a public repo is a live credential disclosure. Stop, report it in the digest, and let the owner
-rotate the token.
+If any invariant fails, fix it before exiting. Invariant 4 is non-negotiable — a leaked credential
+in a public repo is a live disclosure. Stop, report it in the digest, and let the owner rotate it.
