@@ -1,1 +1,9 @@
-[]
+[
+  {
+    "date": "2026-08-29",
+    "repo": "learner-attrition-radar (not created)",
+    "mode": "INNOVATION",
+    "sent": false,
+    "error": "'SMTP_USER'"
+  }
+]
