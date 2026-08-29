@@ -22,21 +22,27 @@ connector tools instead:
    attachment needed first. This is the replacement for "list my repos via the API."
 
 2. **`mcp__Claude_Code_Remote__add_repo({owner, repo, access})`** — attach a specific repo to the
-   session before touching it. `access: "read"` if you only need to inspect it; `access: "push"`
-   if you are about to clone-and-write. The control repo (this one) arrives pre-attached via the
-   routine's own config — you never call `add_repo` on it. Every other repo needs this call once,
-   right before you need it. Do not attach repos speculatively "just in case" — the session's git
-   proxy caps concurrent operations per repo, and the tool's own response tells you to clone
-   immediately, inline, one repo at a time, never in parallel.
+   session before touching it. **`access: "read"` only unlocks anonymous `git clone` of a public
+   repo — it does not enable any `mcp__github__*` tool call.** If you need branches, releases,
+   workflow runs, file contents via the API, search, or anything else GitHub-API-shaped, you need
+   `access: "push"`, even for a repo you're only reading from this run. The control repo (this
+   one) arrives pre-attached via the routine's own config — you never call `add_repo` on it. Every
+   other repo needs this call once, right before you need it. Do not attach repos speculatively
+   "just in case" — the session's git proxy caps concurrent operations per repo, and the tool's
+   own response tells you to clone immediately, inline, one repo at a time, never in parallel.
+
+   One exception: a repo you don't own (INNOVATION mode's inspiration repo) can't reasonably get
+   `access: "push"`. For that case, use `access: "read"` and a plain anonymous `git clone` for any
+   file contents you need — do not call `mcp__github__get_file_contents` on it, that will 403.
 
 3. **GitHub-specific operations** (branches, releases, workflow runs, file contents, pull
    requests, repository creation, search) go through `mcp__github__*` tools once a repo is
-   attached. The exact tool surface can vary by environment — **before assuming a tool doesn't
-   exist, run `ToolSearch` with a plain-language description of the operation** (e.g. `"github
-   create pull request"`, `"github search repositories"`, `"github create release"`) and use
-   whatever it returns. If no matching tool exists after searching, that specific GitHub-API-only
-   action is unavailable this run — skip it, record the gap plainly in the digest, and do not fall
-   back to curl to work around it.
+   attached **with push access** (see above). The exact tool surface can vary by environment —
+   **before assuming a tool doesn't exist, run `ToolSearch` with a plain-language description of
+   the operation** (e.g. `"github create pull request"`, `"github search repositories"`, `"github
+   create release"`) and use whatever it returns. If no matching tool exists after searching, that
+   specific GitHub-API-only action is unavailable this run — skip it, record the gap plainly in
+   the digest, and do not fall back to curl to work around it.
 
 4. **Actual file changes go through real `git`, not the API.** After `add_repo` with `access:
    "push"`, clone with a plain URL — no token, no embedded credentials, the session's git proxy
@@ -158,8 +164,8 @@ Save the raw result to `/tmp/all_repos_preflight.json`.
 
 Try to filter out archived repos and forks with a real metadata check — `ToolSearch` for
 `"github get repository archived fork default branch"` and use whatever tool it returns, calling
-it once per repo (`add_repo` with `access: "read"` first if the tool needs an attached repo). If
-no such tool exists in this environment, don't guess — `list_repos` already only returns repos
+it once per repo (`add_repo` with `access: "push"` first — `mcp__github__*` tools need push
+access even to read, see Authentication above). If no such tool exists in this environment, don't guess — `list_repos` already only returns repos
 you have access to, so proceed with the full list and note in the digest that archived/fork
 status could not be independently verified this run.
 
@@ -188,7 +194,7 @@ not a pre-flight subject.
 stop mid-list and move on to pre-flight 2 — an unfinished pre-flight is fine, an overrunning one
 is not.
 
-For each active repo: `add_repo({owner: "Mallika56", repo: REPO, access: "read"})`, then list
+For each active repo: `add_repo({owner: "Mallika56", repo: REPO, access: "push"})`, then list
 recent runs and keep only the newest run per `workflow_id`:
 
 ```
@@ -822,12 +828,18 @@ print(f"TOP_REPO_OWNER={top_owner}")
 print(f"TOP_REPO_NAME={top_name}")
 ```
 
-Fetch that repo's README for domain signal. It's a public repo not owned by you, so attach it for
-read access first (owner/repo here are the inspiration repo's, not Mallika56's):
+Fetch that repo's README for domain signal. It's a public repo not owned by you — don't request
+`push` access you have no business holding, and don't call `mcp__github__get_file_contents` on it
+(that needs push access and will 403 for a repo you don't own). Use `access: "read"` for the
+attach, which unlocks anonymous `git clone`, and read the file locally instead:
 
 ```
 mcp__Claude_Code_Remote__add_repo({owner: TOP_REPO_OWNER, repo: TOP_REPO_NAME, access: "read"})
-mcp__github__get_file_contents({owner: TOP_REPO_OWNER, repo: TOP_REPO_NAME, path: "README.md"})
+```
+
+```bash
+git clone --depth 1 "https://github.com/${TOP_REPO_OWNER}/${TOP_REPO_NAME}" /tmp/inspiration
+head -80 /tmp/inspiration/README.md
 ```
 
 ## PHASE B — Pick an idea
