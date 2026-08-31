@@ -1,0 +1,17 @@
+[
+  {
+    "date": "2026-08-31",
+    "mode": "IMPROVEMENT",
+    "improvements": [
+      "Fixed generate_spotify.py writing to a hardcoded /home/claude path instead of data/ (portability bug).",
+      "Extracted generate_tracks(n, seed) from module-level script code so it is importable and testable; added type hints and a docstring.",
+      "Added tests/test_generate_spotify.py: 7 tests covering schema, row count, genre validity, feature bounds, injected messiness, and per-seed determinism.",
+      "Added requirements.txt pinned to the project's actual imports plus pytest.",
+      "Added .github/workflows/ci.yml (checkout, setup-python 3.11, install, pytest).",
+      "Synced README: replaced the unfilled Key Findings template with the real write-up already in the notebook, pointed How to Run at requirements.txt, removed a stray leftover HTML comment."
+    ],
+    "tests_passed": true,
+    "commits": 6,
+    "notes": "PR_ONLY repo -- pushed via branch lantern/2026-08-31 + PR #1 (https://github.com/Mallika56/spotify-analytics/pull/1), not directly to main. Today's date-seeded pick (offset 0) was chicago-crime-analysis, but its history showed a full Notebook-tier pass from 2026-08-29 still sitting in an unmerged PR with no high-value work left, so Phase 1 was re-run with the seed incremented until a fresh candidate (offset 2) came up: spotify-analytics, which had no prior history entry. Repo has real Python source (generate_spotify.py) alongside a notebook, so it got the Tier 1-4 treatment rather than the Notebook tier. No Tier 5 (performance) work: no hot loops or N+1 patterns to address. Email digest failed to send -- no SMTP_USER/SMTP_PASS in this environment -- recorded in email_status.json, run not failed."
+  }
+]
