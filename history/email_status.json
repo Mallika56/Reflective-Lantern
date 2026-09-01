@@ -24,5 +24,12 @@
     "repo": "spotify-analytics",
     "sent": false,
     "error": "'SMTP_USER'"
+  },
+  {
+    "date": "2026-09-01",
+    "repo": "learner-attrition-radar",
+    "mode": "IMPROVEMENT",
+    "sent": false,
+    "error": "'SMTP_USER'"
   }
 ]
