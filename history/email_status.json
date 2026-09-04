@@ -37,5 +37,11 @@
     "repo": "learner-attrition-radar",
     "sent": false,
     "error": "'SMTP_USER'"
+  },
+  {
+    "date": "2026-09-04",
+    "repo": "Mallika56.github.io",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
