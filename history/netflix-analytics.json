@@ -1,0 +1,17 @@
+[
+  {
+    "date": "2026-09-07",
+    "mode": "IMPROVEMENT",
+    "improvements": [
+      "Fixed generate_data.py: was writing to a hardcoded /home/claude/... path (doesn't exist outside the original authoring environment); now writes to data/netflix_titles_Sample.csv, the synthetic file already committed to the repo",
+      "Extracted generate_titles(n, seed) -> DataFrame from generate_data.py's module-level script so it's importable and testable; verified byte-identical output to the original script for the default seed",
+      "Added an 8-test pytest suite for generate_titles (columns, row count incl. injected duplicates, type/duration consistency, genre-pool membership, injected nulls/dupes, determinism per seed)",
+      "Added requirements.txt pinned to actual imports",
+      "Added .github/workflows/ci.yml running pytest on push/PR",
+      "Corrected README Data Note: it claimed netflix_titles.csv (the file the notebook actually analyzes) was synthetic and told readers to swap in the real Kaggle file -- backwards. netflix_titles.csv IS the real Kaggle dataset; the actually-synthetic file (netflix_titles_Sample.csv, produced by generate_data.py) was undocumented. Also pointed How to Run at requirements.txt and updated the project structure listing"
+    ],
+    "tests_passed": true,
+    "commits": 6,
+    "notes": "PR-only repo (on history/pr_only_repos.json) -- pushed via branch lantern/2026-09-07 and opened https://github.com/Mallika56/netflix-analytics/pull/1 rather than pushing directly to main. Repo has generate_data.py (a real code file) so Tiers 1-5 applied rather than the Notebook tier, though the analysis itself lives in notebooks/netflix_analytics_starter.ipynb. Skipped chicago-crime-analysis (today's date-seeded pick) and Mallika56.github.io (seed+1) before landing here at seed+2: both had all applicable tier/notebook-tier work already complete per their history files and direct inspection (clean notebooks, tests, CI, current README). Email digest not sent -- SMTP_USER/SMTP_PASS not set in this environment; logged to history/email_status.json."
+  }
+]
