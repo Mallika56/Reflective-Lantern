@@ -12,20 +12,22 @@ tool permissions, and its run history.
 
 Each weekday the routine wakes on cron, reads `prompts/system_prompt.md`, and executes it:
 
-1. **Determines mode.** `INNOVATION` on every Wednesday, `IMPROVEMENT` on every other weekday.
-2. **Computes a commit target** from `history/commit_schedule.json`, so no phase ever hard-codes
-   a number.
-3. **Runs pre-flight** across every owned, non-archived, non-fork repo: repairs failing CI,
-   merges stray branches into the default branch, and backfills a `v1.0.0` release where none
-   exists.
-4. **Improvement mode** — picks one repo (date-seeded, so the choice is stable within a day and
+1. **Determines mode.** `PORTFOLIO` on every Wednesday, `IMPROVEMENT` on every other weekday.
+2. **Runs pre-flight** across every owned, non-archived, non-fork repo: repairs failing CI,
+   merges stray branches into the default branch (never `lantern/*` or `dependabot/*` — those
+   wait for review), and backfills a `v1.0.0` release where none exists.
+3. **Improvement mode** — picks one repo (date-seeded, so the choice is stable within a day and
    rotates across days), reads its history file so past work is never repeated, then plans
    improvements across five tiers: security & correctness, tests, code quality, developer
-   experience, performance. One file change = one commit.
-5. **Innovation mode** — surveys the most-starred repositories, extracts a domain, designs an
-   original project in that space, and scaffolds it end to end with a mandatory stack.
-6. **Tests, gates, and pushes.** A hard commit-count gate runs before any push.
-7. **Reports.** Generates a PDF digest, emails it over SMTP, and appends the run to
+   experience, performance. One file change = one commit, and no commit target: a run ships
+   only the real work it finds.
+4. **Portfolio mode** — reads every project repo and keeps `projects.html` on
+   [mallika56.github.io](https://mallika56.github.io) in sync: adds a card for any project
+   missing from the site and corrects cards that no longer match their repo. Every claim on a
+   card is traceable to the repo; it never writes the personal "Why this one" lines.
+5. **Tests and pushes.** Repos listed in `history/pr_only_repos.json` (including the portfolio
+   site) get a `lantern/<date>` branch and a pull request instead of a direct push.
+6. **Reports.** Generates a PDF digest, emails it over SMTP, and appends the run to
    `history/`.
 
 ## Directory layout
@@ -49,7 +51,7 @@ Reflective-Lantern/
 
 | Piece | Choice |
 |---|---|
-| Scheduler | Claude Code Cloud Routine, cron `0 14 * * 1-5` (9 AM CDT, Mon–Fri) |
+| Scheduler | Claude Code Cloud Routine, cron `0 6 * * 1-5` UTC (1 AM CDT, Mon–Fri) |
 | Model | Claude Sonnet with prompt caching |
 | Git / GitHub | `gh` CLI + `git`, authenticated by `GH_PAT` |
 | Reporting | `fpdf2` → PDF, delivered over SMTP |
@@ -86,25 +88,19 @@ Each managed repo gets `history/<repo>.json`, appended once per run:
 ]
 ```
 
-Shared logs: `history/commit_schedule.json` (targets), `history/innovation_log.json` (new
-projects), `history/email_status.json` (SMTP failures, recorded rather than raised).
+Portfolio runs log to `history/Mallika56.github.io.json` with `"mode": "PORTFOLIO"`. Shared logs:
+`history/email_status.json` (SMTP failures, recorded rather than raised) and
+`history/innovation_log.json` (record of the retired Wednesday new-project mode).
 
 ## Configuration
 
-The commit target is the sharpest knob in the system. It lives in
-`history/commit_schedule.json`:
+| File | Controls |
+|---|---|
+| `history/pr_only_repos.json` | Repos that get a pull request instead of a direct push to `main`. |
+| `history/portfolio_exclude.json` | Repos portfolio mode leaves off the site. Add a repo name here to keep it off `projects.html`. |
 
-```json
-{
-  "base_commits_per_week": 25,
-  "increment_per_week": 0
-}
-```
-
-This ships at a flat **25 commits/week (~5/day)**. A hard commit-count gate rewards volume, so
-raising this causes the agent to reach for the fill-up list once genuinely useful work runs
-out — which produces padding, not progress. Raise it only if you have verified there is that
-much real work to do.
+There is deliberately no commit target. An earlier version had a hard commit-count gate; it
+rewarded volume, so runs reached for filler once the real work ran out.
 
 ## Setup
 

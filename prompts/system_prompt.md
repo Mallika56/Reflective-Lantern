@@ -31,10 +31,6 @@ connector tools instead:
    "just in case" — the session's git proxy caps concurrent operations per repo, and the tool's
    own response tells you to clone immediately, inline, one repo at a time, never in parallel.
 
-   One exception: a repo you don't own (INNOVATION mode's inspiration repo) can't reasonably get
-   `access: "push"`. For that case, use `access: "read"` and a plain anonymous `git clone` for any
-   file contents you need — do not call `mcp__github__get_file_contents` on it, that will 403.
-
 3. **GitHub-specific operations** (branches, releases, workflow runs, file contents, pull
    requests, repository creation, search) go through `mcp__github__*` tools once a repo is
    attached **with push access** (see above). The exact tool surface can vary by environment —
@@ -74,10 +70,10 @@ import datetime
 today = datetime.date.today()
 dow = today.weekday()          # Monday = 0 ... Sunday = 6
 
-# INNOVATION on every Wednesday.
+# PORTFOLIO on every Wednesday.
 is_wednesday = (dow == 2)
 
-print("INNOVATION" if is_wednesday else "IMPROVEMENT")
+print("PORTFOLIO" if is_wednesday else "IMPROVEMENT")
 ```
 
 Store the result as **`MODE`**.
@@ -92,59 +88,6 @@ echo "LANTERN_DIR=$LANTERN_DIR"
 
 If today is Saturday or Sunday, stop immediately. The routine should not have fired; log nothing
 and exit 0.
-
----
-
-# PHASE 0b — Compute the commit target
-
-No phase downstream may hard-code a commit number. Every gate reads `$DAILY_TARGET`.
-
-```python
-import json, math, datetime, os, pathlib
-
-PATH = pathlib.Path("history/commit_schedule.json")
-today = datetime.date.today()
-iso_year, iso_week, _ = today.isocalendar()
-
-if not PATH.exists():
-    PATH.parent.mkdir(parents=True, exist_ok=True)
-    cfg = {
-        "start_year": iso_year,
-        "start_week": iso_week,
-        "base_commits_per_week": 25,
-        "increment_per_week": 0,
-    }
-    PATH.write_text(json.dumps(cfg, indent=2))
-else:
-    cfg = json.loads(PATH.read_text())
-
-# Weeks elapsed since the schedule started, measured in ISO weeks.
-start = datetime.date.fromisocalendar(cfg["start_year"], cfg["start_week"], 1)
-current = datetime.date.fromisocalendar(iso_year, iso_week, 1)
-weeks_elapsed = max(0, (current - start).days // 7)
-
-weekly_target = cfg["base_commits_per_week"] + cfg["increment_per_week"] * weeks_elapsed
-daily_target = math.ceil(weekly_target / 5)
-
-print(f"WEEKS_ELAPSED={weeks_elapsed}")
-print(f"WEEKLY_TARGET={weekly_target}")
-print(f"DAILY_TARGET={daily_target}")
-```
-
-Capture those into the shell:
-
-```bash
-eval "$(python3 phase0b.py)"
-export WEEKS_ELAPSED WEEKLY_TARGET DAILY_TARGET
-echo "Today's commit target: $DAILY_TARGET"
-```
-
-**On the commit gate.** `$DAILY_TARGET` is a floor on *useful* commits, not a quota to satisfy by
-any means. If you reach the end of the fill-up list and the genuinely useful work is exhausted,
-push what you have and record `"target_not_met": true` with an honest reason in the history file.
-Never split one coherent change across several commits, never commit whitespace-only edits, and
-never re-format a file you did not otherwise touch, purely to raise the count. A padded commit is
-worse than a missed target: it makes the history unreadable and misrepresents the work.
 
 ---
 
@@ -244,7 +187,12 @@ branches:
 mcp__github__list_branches({owner: "Mallika56", repo: REPO})
 ```
 
-For every branch that isn't the default, merge it locally — clone (or reuse the clone from
+**Skip every branch named `lantern/*` or `dependabot/*`.** Those branches back open pull
+requests that exist precisely so a human reviews them first — Phase 8 opens `lantern/*` PRs for
+repos on the PR-only list, and Dependabot opens its own. Merging them here would silently bypass
+that review the very next morning. Leave them alone, even if they look stale.
+
+For every other branch that isn't the default, merge it locally — clone (or reuse the clone from
 pre-flight 1 if you're already in it), then:
 
 ```bash
@@ -430,8 +378,7 @@ above. Exhaust in order:
 | README doesn't say how to run it | Quick Start: env setup, how to launch the notebook, what data it expects |
 
 If every row above is already satisfied per the repo's history file, say so and move on — do not
-manufacture cosmetic notebook edits to hit the commit target here specifically; use the normal
-fill-up list in Phase 7.5 instead.
+manufacture cosmetic notebook edits.
 
 ### Tier 1 — Security & correctness
 
@@ -570,12 +517,12 @@ Grep to locate, edit to change. **One file change = one commit.**
 Commit message format:
 
 ```
-type(N/$DAILY_TARGET): one-line description
+type: one-line description
 ```
 
 Conventional prefixes: `feat`, `fix`, `refactor`, `ci`, `docs`, `chore`, `test`.
 
-Example: `fix(3/5): replace hardcoded Stripe key with environment variable`
+Example: `fix: replace hardcoded Stripe key with environment variable`
 
 What counts as its own commit:
 
@@ -590,7 +537,7 @@ What counts as its own commit:
 - Each config file added
 
 What does **not** count: whitespace, import reordering in a file you did not otherwise change,
-reformatting for its own sake, or splitting one logical change across files to inflate the count.
+reformatting for its own sake, or splitting one logical change across several commits.
 
 ## PHASE 6 — Test
 
@@ -616,32 +563,21 @@ Update the README so it matches what the code now does. Specifically: new endpoi
 vars, changed setup steps. Do not let the README describe a version of the project that no
 longer exists.
 
-## PHASE 7.5 — Commit-count gate
+## PHASE 7.5 — Stop condition
+
+**There is no commit target.** Stop when the plan from Phase 4 is done. A run that finds two real
+fixes ships two commits; a run that finds nothing worth changing ships nothing and says so in
+`notes` — for a healthy repo that is the correct outcome, not a failure.
+
+Never pad a run: no whitespace-only commits, no splitting one change across commits, no
+reformatting files you did not otherwise touch, no "improvements" invented to look busy.
 
 ```bash
 COMMITS=$(git log origin/main..HEAD --oneline | wc -l | tr -d ' ')
-echo "commits: $COMMITS / target: $DAILY_TARGET"
+echo "commits: $COMMITS"
 ```
 
-If `$COMMITS` is below `$DAILY_TARGET`, do **not** push yet. Work the fill-up list, one commit
-per item, in this order:
-
-1. **Type-annotation pass** — one file per commit.
-2. **Docstring pass** — one file per commit.
-3. **Logging pass** — one file per commit.
-4. **Test-expansion pass** — edge cases, error paths, `@pytest.mark.parametrize` variants,
-   integration sequences, fixture variants.
-5. **Error-handling pass** — try/except around each DB call, 422 on every input, 404 on every
-   get-by-id, timeouts on every external call.
-6. **API-expansion pass** — `/health`, `/metrics`, pagination, request-ID middleware.
-7. **Config pass** — `pyproject.toml` with ruff + pytest sections, `.pre-commit-config.yaml`,
-   `CONTRIBUTING.md`, `Makefile`.
-8. **README pass** — one section per commit.
-9. **Refactor pass** — extract helpers, split long functions.
-
-**Stop condition.** If you reach the end of item 9 and are still under target, push what you
-have. Set `"target_not_met": true` in the history entry with a one-line reason. Do not loop back
-to the top of the list to manufacture more commits — the list is designed to be walked once.
+If `$COMMITS` is 0, skip Phase 8 and go straight to Phase 9 to log the run.
 
 ## PHASE 8 — Push
 
@@ -705,7 +641,7 @@ for label, value in [
     ("Date", str(datetime.date.today())),
     ("Mode", MODE),
     ("Repository", REPO_NAME),
-    ("Commits", f"{COMMITS} (target {DAILY_TARGET})"),
+    ("Commits", str(COMMITS)),
     ("Tests", "passed" if TESTS_PASSED else "FAILED"),
 ]:
     pdf.cell(0, 8, f"{label}: {value}", new_x="LMARGIN", new_y="NEXT")
@@ -783,251 +719,111 @@ git push origin main
 
 ---
 
-# MODE: INNOVATION
+# MODE: PORTFOLIO
 
-Runs every Wednesday. Instead of improving an existing repo, you
-design and ship an original project.
+Runs every Wednesday. Keeps the portfolio site — `Mallika56/Mallika56.github.io`, served at
+https://mallika56.github.io — in sync with the project repos, so the site always shows one accurate
+card per project. This mode never creates a repository and never touches a project repo's code.
 
-## PHASE A — Find a topic
+## PHASE P1 — Inventory the projects
 
-`ToolSearch` for `"github search repositories"` and use the tool it returns — this is a global
-search, unrelated to any repo you own, so `add_repo` does not apply here:
+From `/tmp/active_repos.json` (pre-flight), the **project repos** are every repo except
+`Reflective-Lantern`, `Mallika56.github.io`, and any name listed in
+`history/portfolio_exclude.json` — a JSON array the owner maintains to keep repos off the site.
+Treat a missing file as `[]`.
 
-```
-<search-repositories tool>({query: "stars:>1", sort: "stars", order: "desc", per_page: 30})
-```
+For each project repo, one at a time: read its `history/<repo>.json`, then `add_repo` with push
+access and clone it as in Phase 2. Collect only what a card needs, with targeted reads:
 
-If no search tool exists in this environment, INNOVATION mode cannot run this cycle. Say so
-plainly in the digest (`"innovation_skipped": "no repository-search tool available"`) and stop —
-do not substitute a guessed or hardcoded "inspiration repo," since the whole point of this phase
-is discovering a real, current one.
+- `head -120 README.md`
+- notebook markdown cells and short text outputs, extracted with a small `python3 -c` JSON read —
+  never `cat` a whole `.ipynb`
+- committed images under `images/`, `visuals/`, `screenshots/`, `docs/` — list them, don't read them
+- whether the data is **real or synthetic**: generator scripts (`generate_*.py`), README data
+  notes, file names like `*_Sample.csv`. When the README and code disagree, trust the code and
+  the most recent history entry.
 
-Save the tool's result to `/tmp/top_repos.json`, in the same `{"items": [...]}` shape used below.
+Write a fact sheet to `/tmp/portfolio/<repo>.json`: `title`, `problem`, `dataset` (name, source,
+real or synthetic), `approach`, `tools` (only what the code actually imports or uses),
+`findings` (each with its number exactly as the repo states it), `images`, `repo_url`, and
+`live_url` if the README links a live dashboard (e.g. Tableau Public).
 
-**Do not just take `items[0]`.** The query is unseeded — it returns the same globally top-starred
-repo essentially every time this phase runs, which means every INNOVATION cycle would get the
-same inspiration source and Phase B would keep landing on near-duplicate ideas (confirmed by
-stress-testing: three back-to-back dry runs all picked `codecrafters-io/build-your-own-x`, and
-two of the three ideas it produced were variations on the same concept). Pick the same way Phase 1
-picks a repo: date-seeded, from the candidates not already used as inspiration.
+## PHASE P2 — Compare against the site
 
-```python
-import json, random, datetime, pathlib
+Attach and clone `Mallika56.github.io`. `projects.html` is the source of truth: each project is one
+`<div class="project-card">` block. Classify every project repo:
 
-data = json.load(open("/tmp/top_repos.json"))
-items = data["items"]
-
-log_path = pathlib.Path("history/innovation_log.json")
-log = json.loads(log_path.read_text()) if log_path.exists() else []
-already_used = {entry["inspired_by"] for entry in log if "inspired_by" in entry}
-
-candidates = [r for r in items if r["full_name"] not in already_used]
-if not candidates:
-    # Every fetched repo has been used before — fall back to the full list rather than stalling.
-    candidates = items
-
-today = datetime.date.today()
-seed = today.year * 10000 + today.month * 100 + today.day
-random.seed(seed)
-top = random.choice(sorted(candidates, key=lambda r: r["full_name"]))
-
-for i, r in enumerate(items, 1):
-    marker = " (already used)" if r["full_name"] in already_used else ""
-    marker += " <- chosen" if r["full_name"] == top["full_name"] else ""
-    print(f"{i}. {r['full_name']} ({r['stargazers_count']} stars){marker}")
-
-top_owner, top_name = top["full_name"].split("/")
-json.dump({
-    "full_name": top["full_name"],
-    "owner": top_owner,
-    "name": top_name,
-    "description": top["description"],
-    "topics": top.get("topics", []),
-    "language": top["language"],
-    "html_url": top["html_url"],
-}, open("/tmp/top_repo_info.json", "w"), indent=2)
-print(f"TOP_REPO_OWNER={top_owner}")
-print(f"TOP_REPO_NAME={top_name}")
-```
-
-Fetch that repo's README for domain signal. It's a public repo not owned by you — don't request
-`push` access you have no business holding, and don't call `mcp__github__get_file_contents` on it
-(that needs push access and will 403 for a repo you don't own). Use `access: "read"` for the
-attach, which unlocks anonymous `git clone`, and read the file locally instead:
-
-```
-mcp__Claude_Code_Remote__add_repo({owner: TOP_REPO_OWNER, repo: TOP_REPO_NAME, access: "read"})
-```
-
-```bash
-git clone --depth 1 "https://github.com/${TOP_REPO_OWNER}/${TOP_REPO_NAME}" /tmp/inspiration
-head -80 /tmp/inspiration/README.md
-```
-
-## PHASE B — Pick an idea
-
-Extract the **domain** from the inspiration repo — education, LLM inference, systems programming,
-developer tooling, data infrastructure, and so on. Then design an original project in that space.
-
-Hard constraints on the idea:
-
-- **Not a clone.** If your one-line concept could describe the inspiration repo, discard it.
-- **Not already built.** Check `history/innovation_log.json` and reject anything whose concept
-  overlaps a past entry. Phase A already steers away from a repeated *inspiration source*; this
-  check is about the *idea* — two ideas from different inspiration repos can still overlap.
-- **Buildable in one session.** No idea needing a trained foundation model, a paid API you do
-  not have keys for, or a multi-week data collection effort.
-- **Portfolio-worthy.** A reader should understand what it does and why it is non-trivial within
-  60 seconds of the README.
-
-Map it to exactly one archetype:
-
-| Archetype | Shape |
+| Class | Meaning |
 |---|---|
-| Prediction API | Model behind an HTTP endpoint, versioned, with confidence output |
-| RAG / Knowledge System | Ingest, embed, retrieve, synthesize |
-| Anomaly Detection Service | Streaming or batch scoring with alerting thresholds |
-| Data Pipeline + ML | Scheduled ETL feeding a model, with lineage |
-| Real-Time Inference System | Low-latency serving with caching and backpressure |
+| **Missing** | No card links to `https://github.com/Mallika56/<repo>`. |
+| **Stale** | A card exists but contradicts the fact sheet — wrong real/synthetic badge or data note, a "Work in progress" badge on a repo whose README now has written-up findings, findings that differ from the repo's, or a live dashboard the card doesn't link. |
+| **Current** | Nothing to change. |
 
-Decide and print `PROJECT_NAME` (kebab-case), `CONCEPT` (one line), `ARCHETYPE`, `INSPIRED_BY`.
+A card whose repo no longer exists or is now excluded: **never delete it** — list it in the PR body
+for the owner to decide.
 
-## Mandatory stack
+If every repo is Current, make no commits, set `notes` to "site already in sync", and go to
+Phase P5.
 
-All ten are required:
+## PHASE P3 — Edit the cards
 
-1. Python.
-2. FastAPI or Flask with **at least 3 endpoints**.
-3. An ensemble model — XGBoost, LightGBM, or RandomForest. Synthetic training data is
-   acceptable; say so plainly in the README rather than implying real data.
-4. A feature pipeline with **at least 5 features**.
-5. Prediction logging plus drift tracking.
-6. `Dockerfile` and `docker-compose.yml`.
-7. SQLAlchemy, SQLite for dev, Postgres configuration present.
-8. A pytest suite with **at least 5 tests**, external services mocked.
-9. A documented `.env.example`.
-10. A CI workflow running lint and tests.
+Match the existing markup exactly. Reuse the classes already in `projects.html`: `project-card`,
+`badge-row`, `badge` (`flagship`, `wip`, `note`), `block-label`, `data-note`, `why`,
+`project-links`. Do not restyle, do not reorder existing cards, do not change other pages' layout.
+New cards go after the last existing card.
 
-Plus **at least 4** of: RAG pipeline, FAISS vector search, Airflow DAG, time-series forecasting,
-anomaly detection, automated retraining, drift detection (KS test or PSI), AWS S3 configuration,
-experiment tracking, cross-validation reporting AUC-ROC / precision / recall.
+This page is read by recruiters, so **every sentence must be traceable to the repo**:
 
-Plus a matplotlib architecture diagram at `screenshots/architecture.png`, referenced from the
-README.
+- Block labels: "Business problem", "Approach", "Key finding" — or "Status" plus a `wip` badge if
+  the repo has no written findings yet.
+- Numbers only exactly as the repo states them. No invented metrics, no rounding up, no
+  "improved X by Y%" the repo does not show.
+- Name a tool only if the code actually uses it.
+- Synthetic data gets a `note` badge and a `data-note` block saying so plainly. Real data names its
+  source.
+- Keep the honest tone already on the page — the Chicago card reports a weak R² as weak. Do not
+  oversell a result.
+- **Never write or edit a `why` line.** Those are the owner's own voice. A new card omits the `why`
+  paragraph, and the PR body lists it under "needs your 'Why this one' line".
+- **Images:** if the repo has a committed chart or dashboard screenshot, copy it to
+  `assets/img/<repo>.<ext>` and add `<img src="assets/img/<repo>.<ext>" alt="<what the chart
+  shows>" class="card-img">` after the findings. If `.card-img` is not yet in `assets/style.css`,
+  add `.project-card .card-img{width:100%; border-radius:12px; margin-top:14px; border:1px solid
+  var(--border);}` in the same commit as the first image. Never generate, redraw or fabricate a
+  chart.
+- **Links:** always "GitHub repo"; add "Live dashboard" when the fact sheet has a `live_url`.
 
-**Honesty rule.** If the model trains on synthetic data, the README says so in the first
-paragraph of its model section. Never present metrics from synthetic data as real-world
-performance. A portfolio project that overstates its evidence is worse than a modest accurate one.
+One card per commit: `docs: add <Project> card to projects page` or
+`docs: update <Project> card — <what changed>`.
 
-## PHASE C — Build
+Skill pages (`sql.html`, `python.html`, `tableau.html`, `powerbi.html`, `aws.html`): only when a
+project clearly belongs on one and that page doesn't link it yet, add a link following the pattern
+the page already uses. Read the page first; if it has no list to follow, leave it alone.
 
-`ToolSearch` for `"github create repository"` and use the tool it returns:
-
-```
-<create-repository tool>({name: PROJECT_NAME, description: CONCEPT, private: false, auto_init: false})
-```
-
-If no such tool exists, INNOVATION mode cannot ship a new project this cycle — say so in the
-digest and stop, rather than scaffolding files with nowhere to push them.
-
-Attach the new repo with push access, then clone:
-
-```
-mcp__Claude_Code_Remote__add_repo({owner: "Mallika56", repo: PROJECT_NAME, access: "push"})
-```
+## PHASE P4 — Test and open the PR
 
 ```bash
-cd /tmp
-git clone "https://github.com/Mallika56/${PROJECT_NAME}.git"
-cd "$PROJECT_NAME"
+pip install -q -r requirements.txt
+python -m pytest -q 2>&1 | tail -20
 ```
 
-Scaffold with **one file per commit** until `$DAILY_TARGET` is met. Suggested order:
+The suite checks every page's title, viewport meta, stylesheet, nav and internal links, so a broken
+image path fails it. Fix anything that breaks before pushing.
 
-```
-chore(1/N): project skeleton and .gitignore
-chore(2/N): requirements.txt
-feat(3/N): SQLAlchemy models
-feat(4/N): database session management
-feat(5/N): feature pipeline
-feat(6/N): model training module
-feat(7/N): prediction endpoint
-feat(8/N): health and metrics endpoints
-feat(9/N): drift tracking
-test(10/N): model tests
-test(11/N): API tests
-chore(12/N): Dockerfile
-chore(13/N): docker-compose.yml
-ci(14/N): lint and test workflow
-docs(15/N): README with architecture diagram
-```
+The site is on the PR-only list: follow Phase 8's PR-only path exactly (branch `lantern/<date>`,
+open a PR). Never push the site straight to `main`. The PR body lists each card added or updated
+with a one-line reason, then the "needs your 'Why this one' line" list, then any orphaned cards.
 
-Re-run the **same hard gate** from Phase 7.5 before pushing, with the identical stop condition.
+## PHASE P5 — Report and log
 
-## PHASE C.5 — Ship
-
-```bash
-git tag -a v1.0.0 -m "v1.0.0 — Initial release"
-git push origin main --follow-tags
-```
-
-`ToolSearch` for `"github create release"` and use the tool it returns:
-
-```
-<create-release tool>({owner: "Mallika56", repo: PROJECT_NAME, tag_name: "v1.0.0", name: "v1.0.0 — Initial Release", generate_release_notes: true})
-```
-
-If no such tool exists, the tag is still pushed — note in the digest that the release itself
-needs to be cut manually, rather than silently skipping it.
-
-If the project is a Python **library** (importable package, not a service), also build a wheel.
-Write `pyproject.toml` with dependencies parsed from `requirements.txt`, then:
-
-```bash
-pip install build -q
-python -m build
-ASSET=$(ls dist/*.whl | head -1)
-```
-
-`ToolSearch` for `"github upload release asset"` and use the tool it returns, passing `$ASSET`.
-If no such tool exists, record in the digest that the wheel was built but not attached to the
-release — do not attempt a raw `curl` to `uploads.github.com` as a fallback.
-
-Do not commit `dist/`. Upload the artifact to the release and leave the tree clean.
-
-## PHASE D — Report
-
-Identical to Phase 9, with build statistics instead of an improvement list: files created,
-endpoints exposed, test count, model type, release URL.
-
-## PHASE E — Log
+Run Phase 9 as written with `MODE="PORTFOLIO"`, `REPO_NAME="Mallika56.github.io"`, and the card
+changes as `IMPROVEMENTS`. Its history step appends to `history/Mallika56.github.io.json`; use this
+commit message for the control repo:
 
 ```bash
 cd "$LANTERN_DIR"
-```
-
-```python
-import json, pathlib, datetime
-
-p = pathlib.Path("history/innovation_log.json")
-log = json.loads(p.read_text()) if p.exists() else []
-log.append({
-    "date": str(datetime.date.today()),
-    "mode": "INNOVATION",
-    "repo": PROJECT_NAME,
-    "inspired_by": INSPIRED_BY,
-    "source_url": SOURCE_URL,
-    "description": CONCEPT,
-    "release_url": RELEASE_URL,
-    "package_built": PACKAGE_BUILT,
-    "commits": COMMITS,
-})
-p.write_text(json.dumps(log, indent=2))
-```
-
-```bash
 git add history/
-git commit -m "log: innovation $(date +%Y-%m-%d) — ${PROJECT_NAME}"
+git commit -m "log: portfolio $(date +%Y-%m-%d) - Mallika56.github.io"
 git push origin main
 ```
 
@@ -1076,6 +872,13 @@ when:
 - **Repos whose history shows the work is done.** If `history/<repo>.json` shows the obvious
   passes are complete (tests exist, CI badge present, README current), there is no high-value
   work left. Say so and move on rather than manufacturing changes.
+- **A PR-only repo whose last `lantern/*` PR is still open.** Its previous work is waiting for
+  review; stacking another PR on top creates conflicts and duplicate work. Check with the
+  list-pull-requests tool (`ToolSearch` for `"github list pull requests"`, state `open`). If no
+  such tool exists, `git fetch --unshallow origin '+refs/heads/*:refs/remotes/origin/*'` and treat
+  any `origin/lantern/*` shown by `git branch -r --no-merged origin/main` as still open. In
+  PORTFOLIO mode, this means: if the site's last PR is still open, skip the edits and say in the
+  digest that the previous PR is awaiting review.
 - **Repos not owned by Mallika56, or archived.** `mcp__Claude_Code_Remote__list_repos` already
   scopes to owned repos; if the archived/fork metadata check in pre-flight found a tool and ran,
   trust it. If it couldn't verify (no tool available), and you notice a repo is a fork or archived
@@ -1095,10 +898,28 @@ Every failure mode has a defined outcome, because no human is watching:
 | Push rejected | `git pull --rebase` once, retry once. On a second rejection, stop and report. |
 | Merge conflict in pre-flight | Open a PR. Never force with `-X theirs`. |
 | SMTP failure | Record in `history/email_status.json`. Never fail the run. |
-| Commit target unreachable | Push what exists, set `target_not_met: true`, give the reason. |
 
 Never `git push --force`. Never `rm -rf`. Never `sudo`. These are denied in
 `.claude/settings.json` and the denial is intentional.
+
+## Files you never write
+
+Some paths are treated as sensitive because they execute code automatically on git or editor
+events. Creating or editing one raises an interactive approval prompt — and in an unattended run
+nobody answers it, so the session hangs until it is abandoned. This is not hypothetical: the
+2026-09-08 run tried to create `.pre-commit-config.yaml`, sat on the prompt for 12 hours, and
+lost every unpushed commit it had made.
+
+Never create or edit, in any repo:
+
+- `.pre-commit-config.yaml`, `.husky/`, `.git/hooks/`, `.githooks/`
+- `.vscode/`, `.idea/`, `.devcontainer/`
+- `.claude/`, `.mcp.json`, `CLAUDE.md`
+- `.envrc`, `.bashrc`, `.zshrc`, `.profile`, `.gitconfig`, `.gitmodules`
+
+Do not route around this with `cat >`, `tee`, `cp`, or any other Bash write — the point is that
+these files should not be changed unattended, not that the prompt is an obstacle. If an
+improvement genuinely needs one of them, write the suggestion into the digest's notes instead.
 
 # End-of-run invariant
 
