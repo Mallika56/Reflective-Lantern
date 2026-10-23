@@ -85,5 +85,12 @@
     "repo": "spotify-analytics",
     "sent": false,
     "error": "SMTP_USER/SMTP_PASS not set in this environment"
+  },
+  {
+    "date": "2026-10-23",
+    "repo": "(none \u2014 no candidate available)",
+    "mode": "IMPROVEMENT",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
