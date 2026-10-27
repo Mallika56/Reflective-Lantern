@@ -98,5 +98,11 @@
     "repo": "no candidate available",
     "sent": false,
     "error": "'SMTP_USER'"
+  },
+  {
+    "date": "2026-10-27",
+    "repo": "learner-attrition-radar",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
