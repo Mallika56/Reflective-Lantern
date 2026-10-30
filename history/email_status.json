@@ -116,5 +116,11 @@
     "repo": "no candidate available",
     "sent": false,
     "error": "'SMTP_USER'"
+  },
+  {
+    "date": "2026-10-30",
+    "repo": "chicago-crime-analysis",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
