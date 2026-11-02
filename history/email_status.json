@@ -122,5 +122,11 @@
     "repo": "chicago-crime-analysis",
     "sent": false,
     "error": "SMTP_USER/SMTP_PASS not set in this environment"
+  },
+  {
+    "date": "2026-11-02",
+    "repo": "learner-attrition-radar",
+    "sent": false,
+    "error": "[Errno -2] Name or service not known"
   }
 ]
