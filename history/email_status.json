@@ -128,5 +128,11 @@
     "repo": "learner-attrition-radar",
     "sent": false,
     "error": "[Errno -2] Name or service not known"
+  },
+  {
+    "date": "2026-11-04",
+    "repo": "Mallika56.github.io",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
