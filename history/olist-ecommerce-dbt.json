@@ -1,0 +1,15 @@
+[
+  {
+    "date": "2026-11-05",
+    "mode": "IMPROVEMENT",
+    "improvements": [
+      "Added a pytest suite (8 tests, every network/subprocess call mocked) for scripts/download_data.py -- previously the repo had 81 dbt data tests + 2 dbt unit tests but zero Python unit tests.",
+      "Added pytest to requirements.txt and wired it into CI as a step that runs before the dbt build.",
+      "Added .env.example documenting the optional DBT_DUCKDB_PATH override read by profiles.yml.",
+      "Updated README (Testing, Run it, Project layout sections) to document the new pytest suite."
+    ],
+    "tests_passed": true,
+    "commits": 5,
+    "notes": "Tiers 1/3/4/5 already largely satisfied by the initial build; Tier 2 (tests) was the real gap -- added Python unit tests, since prior coverage was dbt-only. Did not convert print() to logging in scripts/ (would break run_analysis.py's intentional stdout JSON output) and did not unit-test run_analysis.py (top-level script, no functions -- flagged for a future refactor). Selected after skipping chicago-crime-analysis and spotify-analytics, whose last lantern/* PRs are still open awaiting review. SMTP_USER/SMTP_PASS not set in this environment; digest email not sent (recorded in email_status.json)."
+  }
+]
