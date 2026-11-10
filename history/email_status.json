@@ -146,5 +146,11 @@
     "repo": "chicago-divvy-lakehouse-aws",
     "sent": false,
     "error": "SMTP_USER/SMTP_PASS not set in this environment"
+  },
+  {
+    "date": "2026-11-10",
+    "repo": "ab-test-checkout-analysis",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
