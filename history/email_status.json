@@ -170,5 +170,11 @@
     "repo": "olist-ecommerce-dbt",
     "sent": false,
     "error": "SMTP_USER/SMTP_PASS not set in this environment"
+  },
+  {
+    "date": "2026-11-16",
+    "repo": "chicago-divvy-lakehouse-aws",
+    "sent": false,
+    "error": "'SMTP_USER'"
   }
 ]
