@@ -176,5 +176,11 @@
     "repo": "chicago-divvy-lakehouse-aws",
     "sent": false,
     "error": "'SMTP_USER'"
+  },
+  {
+    "date": "2026-11-17",
+    "repo": "no_candidate",
+    "sent": false,
+    "error": "[Errno -2] Name or service not known"
   }
 ]
