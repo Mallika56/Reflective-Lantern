@@ -194,5 +194,11 @@
     "repo": "olist-ecommerce-dbt",
     "sent": false,
     "error": "[Errno -2] Name or service not known"
+  },
+  {
+    "date": "2026-11-20",
+    "repo": "learner-attrition-radar",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not configured in this environment"
   }
 ]
