@@ -206,5 +206,11 @@
     "repo": "olist-ecommerce-dbt",
     "sent": false,
     "error": "SMTP_USER/SMTP_PASS not set in this environment"
+  },
+  {
+    "date": "2026-11-24",
+    "repo": "ab-test-checkout-analysis",
+    "sent": false,
+    "error": "SMTP_USER/SMTP_PASS not set in this environment"
   }
 ]
